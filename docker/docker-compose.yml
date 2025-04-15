@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: brewery-data-pipeline:latest
+    restart: always
+    depends_on:
+      - airflow-postgres
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+      - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+      - AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK=true
+      - DATA_LAKE_ROOT=/opt/airflow/data
+      - ENVIRONMENT=development
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./scripts:/opt/airflow/scripts
+      - ./config:/opt/airflow/config
+      - ./data:/opt/airflow/data
+      - ./logs:/opt/airflow/logs
+    ports:
+      - "8080:8080"
+    command: >
+      bash -c "
+      airflow db init &&
+      airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com &&
+      airflow webserver
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "[ -f /opt/airflow/airflow-webserver.pid ]"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+
+  airflow-scheduler:
+    image: brewery-data-pipeline:latest
+    restart: always
+    depends_on:
+      - airflow-webserver
+      - airflow-postgres
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+      - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=
+      - DATA_LAKE_ROOT=/opt/airflow/data
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./scripts:/opt/airflow/scripts
+      - ./config:/opt/airflow/config
+      - ./data:/opt/airflow/data
+      - ./logs:/opt/airflow/logs
+    command: airflow scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "[ -f /opt/airflow/airflow-scheduler.pid ]"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+
+  airflow-postgres:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      retries: 5
+
+  spark:
+    image: bitnami/spark:3.3
+    container_name: spark
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "8081:8080"  # Spark UI
+      - "7077:7077"  # Spark Master port
+    volumes:
+      - ./scripts:/scripts
+      - ./data:/data
+
+volumes:
+  postgres-db-volume:
